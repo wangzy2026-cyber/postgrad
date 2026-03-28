@@ -4,7 +4,7 @@ import edge_tts
 import asyncio
 import base64
 import time
-import secrets # 引入更安全的随机库
+import secrets
 from openai import OpenAI
 
 # 1. 配置
@@ -24,7 +24,7 @@ async def get_voice_b64(text, voice):
     except:
         return None
 
-# 2. 样式
+# 2. 样式 (新增了 .phonetic-font 样式)
 st.set_page_config(page_title="Flash Cards Pro", page_icon="💡", layout="centered")
 st.markdown("""
     <style>
@@ -43,7 +43,8 @@ st.markdown("""
         box-shadow: 0 4px 15px rgba(30, 58, 138, 0.2);
     }
     .result-container { text-align: center; margin-top: 20px; }
-    .word-font { font-size: 65px; font-weight: 900; color: #1E3A8A; letter-spacing: -1px; }
+    .word-font { font-size: 65px; font-weight: 900; color: #1E3A8A; letter-spacing: -1px; margin-bottom: 0px;}
+    .phonetic-font { font-size: 20px; color: #64748B; font-family: 'Arial Unicode MS', sans-serif; margin-bottom: 10px; }
     .def-font { font-size: 26px; color: #1E40AF; font-weight: 600; margin: 15px 0; line-height: 1.3; }
     .example-container { 
         background: #F8FAFC; border-left: 6px solid #1E3A8A; 
@@ -71,7 +72,7 @@ for i, m in enumerate(modes):
             st.session_state.data = None
             st.rerun()
 
-# 5. 抽词逻辑 (增加指纹随机性)
+# 5. 抽词逻辑 (Prompt增加了Phonetic要求)
 col1, col2, col3 = st.columns([1, 1, 1])
 with col2:
     st.markdown('<div class="main-btn">', unsafe_allow_html=True)
@@ -79,25 +80,28 @@ with col2:
         st.session_state.step = 1
         st.session_state.data = None
         
-        # 生成唯一的随机指纹，防止多端同步
         fingerprint = secrets.token_hex(4) 
         
         try:
-            prompt = f"Target: {st.session_state.mode}. UID: {fingerprint}. Task: Provide 1 truly RANDOM word. Format: Word|EnglishDefinition|EnglishSentence|ChineseTranslation."
+            # 修改了 Prompt，增加了 Phonetic 字段
+            prompt = f"Target: {st.session_state.mode}. UID: {fingerprint}. Task: Provide 1 truly RANDOM word. Format: Word|Phonetic|EnglishDefinition|EnglishSentence|ChineseTranslation."
             response = client.chat.completions.create(
                 model="deepseek-chat",
                 messages=[{"role": "user", "content": prompt}],
                 timeout=7.0,
-                temperature=1.3 # 进一步调高随机权重
+                temperature=1.3
             )
             raw = response.choices[0].message.content.strip()
             res = raw.replace("*", "").split("|")
-            if len(res) >= 4:
+            
+            # 解析逻辑从 4 位增加到 5 位
+            if len(res) >= 5:
                 st.session_state.data = {
                     "word": res[0].strip(),
-                    "def_en": res[1].strip(),
-                    "sent_en": res[2].strip(),
-                    "sent_cn": res[3].strip()
+                    "phonetic": res[1].strip(),
+                    "def_en": res[2].strip(),
+                    "sent_en": res[3].strip(),
+                    "sent_cn": res[4].strip()
                 }
                 v_map = {"考研": "en-GB-SoniaNeural", "IELTS": "en-GB-SoniaNeural", "TOEFL": "en-US-GuyNeural", "GRE": "en-US-GuyNeural"}
                 st.session_state.voice = v_map.get(st.session_state.mode, "en-US-GuyNeural")
@@ -108,7 +112,13 @@ with col2:
 # 6. 渲染
 if st.session_state.step >= 1 and st.session_state.data:
     data = st.session_state.data
-    st.markdown(f'<div class="result-container"><div class="word-font">{data["word"]}</div></div>', unsafe_allow_html=True)
+    # 渲染单词和音标
+    st.markdown(f'''
+        <div class="result-container">
+            <div class="word-font">{data["word"]}</div>
+            <div class="phonetic-font">[{data["phonetic"]}]</div>
+        </div>
+    ''', unsafe_allow_html=True)
     
     if st.session_state.step == 1:
         audio_placeholder = st.empty()
