@@ -4,6 +4,7 @@ import edge_tts
 import asyncio
 import base64
 import time
+import secrets # 引入更安全的随机库
 from openai import OpenAI
 
 # 1. 配置
@@ -23,44 +24,37 @@ async def get_voice_b64(text, voice):
     except:
         return None
 
-# 2. 样式：保持深蓝高亮 + 居中灯泡按钮
+# 2. 样式
 st.set_page_config(page_title="Flash Cards Pro", page_icon="💡", layout="centered")
 st.markdown("""
     <style>
     #MainMenu, footer, header, .stDeployButton {visibility: hidden;}
     [data-testid="stSidebar"] {display: none;}
-    
-    /* 顶部按钮统一样式 */
     .stButton>button { width: 100%; border-radius: 8px; font-weight: bold; }
-    
-    /* 选中模式的颜色 - 深蓝色 (#1E3A8A) */
     div.stButton > button:first-child[kind="primary"] {
         background-color: #1E3A8A !important;
         border-color: #1E3A8A !important;
         color: white !important;
     }
-
-    /* 核心灯泡按钮样式 */
     .main-btn>button { 
         width: 110px !important; height: 110px !important; font-size: 60px !important; 
         border-radius: 50% !important; border: 3px solid #1E3A8A !important; 
         background: #ffffff !important; margin: 20px auto;
         box-shadow: 0 4px 15px rgba(30, 58, 138, 0.2);
     }
-    
     .result-container { text-align: center; margin-top: 20px; }
     .word-font { font-size: 65px; font-weight: 900; color: #1E3A8A; letter-spacing: -1px; }
-    .def-font { font-size: 26px; color: #1E40AF; font-weight: 600; margin: 15px 0; font-family: 'serif'; line-height: 1.3; }
+    .def-font { font-size: 26px; color: #1E40AF; font-weight: 600; margin: 15px 0; line-height: 1.3; }
     .example-container { 
         background: #F8FAFC; border-left: 6px solid #1E3A8A; 
         padding: 20px; margin-top: 20px; border-radius: 0 10px 10px 0; text-align: left;
     }
-    .example-en { font-size: 20px; color: #1e293b; font-style: italic; line-height: 1.5; font-family: 'Georgia', serif; }
+    .example-en { font-size: 20px; color: #1e293b; font-style: italic; line-height: 1.5; }
     .example-cn { font-size: 17px; color: #64748B; margin-top: 10px; }
     </style>
     """, unsafe_allow_html=True)
 
-# 3. 状态初始化
+# 3. 状态
 if 'mode' not in st.session_state: st.session_state.mode = "GRE"
 if 'step' not in st.session_state: st.session_state.step = 0
 if 'data' not in st.session_state: st.session_state.data = None
@@ -77,7 +71,7 @@ for i, m in enumerate(modes):
             st.session_state.data = None
             st.rerun()
 
-# 5. 抽词逻辑
+# 5. 抽词逻辑 (增加指纹随机性)
 col1, col2, col3 = st.columns([1, 1, 1])
 with col2:
     st.markdown('<div class="main-btn">', unsafe_allow_html=True)
@@ -85,13 +79,16 @@ with col2:
         st.session_state.step = 1
         st.session_state.data = None
         
+        # 生成唯一的随机指纹，防止多端同步
+        fingerprint = secrets.token_hex(4) 
+        
         try:
-            # 单词给英文定义，句子给中文翻译
-            prompt = f"Output ONE random {st.session_state.mode} vocabulary. Format: Word|EnglishDefinition|EnglishSentence|ChineseTranslation. Ensure no symbols like stars."
+            prompt = f"Target: {st.session_state.mode}. UID: {fingerprint}. Task: Provide 1 truly RANDOM word. Format: Word|EnglishDefinition|EnglishSentence|ChineseTranslation."
             response = client.chat.completions.create(
                 model="deepseek-chat",
                 messages=[{"role": "user", "content": prompt}],
-                timeout=7.0
+                timeout=7.0,
+                temperature=1.3 # 进一步调高随机权重
             )
             raw = response.choices[0].message.content.strip()
             res = raw.replace("*", "").split("|")
@@ -105,7 +102,7 @@ with col2:
                 v_map = {"考研": "en-GB-SoniaNeural", "IELTS": "en-GB-SoniaNeural", "TOEFL": "en-US-GuyNeural", "GRE": "en-US-GuyNeural"}
                 st.session_state.voice = v_map.get(st.session_state.mode, "en-US-GuyNeural")
         except:
-            st.error("DeepSeek Busy...")
+            st.error("Busy...")
     st.markdown('</div>', unsafe_allow_html=True)
 
 # 6. 渲染
@@ -113,22 +110,20 @@ if st.session_state.step >= 1 and st.session_state.data:
     data = st.session_state.data
     st.markdown(f'<div class="result-container"><div class="word-font">{data["word"]}</div></div>', unsafe_allow_html=True)
     
-    audio_placeholder = st.empty()
-    
     if st.session_state.step == 1:
-        if st.button("Check Definition", key="nxt_2"):
-            st.session_state.step = 2
-            st.rerun()
-            
+        audio_placeholder = st.empty()
         try:
             b64 = asyncio.run(get_voice_b64(data["word"], st.session_state.voice))
             if b64:
                 audio_placeholder.markdown(f'<audio autoplay><source src="data:audio/mp3;base64,{b64}"></audio>', unsafe_allow_html=True)
         except:
             pass
+            
+        if st.button("Check Definition", key="nxt_2"):
+            st.session_state.step = 2
+            st.rerun()
 
     if st.session_state.step >= 2:
-        # 英文释义
         st.markdown(f'<div class="result-container"><div class="def-font">{data["def_en"]}</div></div>', unsafe_allow_html=True)
         if st.session_state.step == 2:
             if st.button("Show Context", key="nxt_3"):
@@ -136,7 +131,6 @@ if st.session_state.step >= 1 and st.session_state.data:
                 st.rerun()
 
     if st.session_state.step == 3:
-        # 例句(英) + 翻译(中)
         st.markdown(f'''<div class="example-container">
             <div class="example-en">{data["sent_en"]}</div>
             <div class="example-cn">{data["sent_cn"]}</div>
