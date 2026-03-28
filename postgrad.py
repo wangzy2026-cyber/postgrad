@@ -12,7 +12,6 @@ client = OpenAI(
     base_url="https://api.deepseek.com"
 )
 
-# 快速语音合成
 async def get_voice_b64(text, voice):
     try:
         communicate = edge_tts.Communicate(text, voice, rate="+10%")
@@ -24,16 +23,23 @@ async def get_voice_b64(text, voice):
     except:
         return None
 
-# 2. 样式：增加模式高亮逻辑
-st.set_page_config(page_title="Flash Cards", page_icon="⚡", layout="centered")
+# 2. 样式：全面深蓝化
+st.set_page_config(page_title="Flash Cards Pro", page_icon="⚡", layout="centered")
 st.markdown("""
     <style>
     #MainMenu, footer, header, .stDeployButton {visibility: hidden;}
     [data-testid="stSidebar"] {display: none;}
     
-    /* 模式切换按钮样式 */
-    .stButton>button { width: 100%; border-radius: 8px; font-weight: bold; transition: 0.2s; }
+    /* 顶部按钮统一样式 */
+    .stButton>button { width: 100%; border-radius: 8px; font-weight: bold; }
     
+    /* 选中模式的颜色 - 深蓝色 */
+    div.stButton > button:first-child[kind="primary"] {
+        background-color: #1E3A8A !important;
+        border-color: #1E3A8A !important;
+        color: white !important;
+    }
+
     /* 核心闪电按钮 */
     .main-btn>button { 
         width: 110px !important; height: 110px !important; font-size: 60px !important; 
@@ -42,8 +48,8 @@ st.markdown("""
     }
     
     .result-container { text-align: center; margin-top: 20px; }
-    .word-font { font-size: 65px; font-weight: 900; color: #1E3A8A; letter-spacing: -1px; margin-bottom: 5px; }
-    .mean-font { font-size: 32px; color: #B91C1C; font-weight: bold; margin: 15px 0; }
+    .word-font { font-size: 65px; font-weight: 900; color: #1E3A8A; letter-spacing: -1px; }
+    .def-font { font-size: 28px; color: #1E40AF; font-weight: 600; margin: 15px 0; font-family: 'serif'; }
     .example-container { 
         background: #F8FAFC; border-left: 6px solid #1E3A8A; 
         padding: 20px; margin-top: 20px; border-radius: 0 10px 10px 0; text-align: left;
@@ -58,12 +64,11 @@ if 'mode' not in st.session_state: st.session_state.mode = "GRE"
 if 'step' not in st.session_state: st.session_state.step = 0
 if 'data' not in st.session_state: st.session_state.data = None
 
-# 4. 模式切换（带高亮区分）
+# 4. 模式切换
 modes = ["考研", "IELTS", "TOEFL", "GRE"]
 cols = st.columns(len(modes))
 for i, m in enumerate(modes):
     with cols[i]:
-        # 如果是当前模式，按钮样式变深色
         is_active = st.session_state.mode == m
         if st.button(m, key=f"m_{m}", type="primary" if is_active else "secondary"):
             st.session_state.mode = m
@@ -80,8 +85,8 @@ with col2:
         st.session_state.data = None
         
         try:
-            # 强化中文指令，严禁韩语
-            prompt = f"Output ONE random {st.session_state.mode} word. Format: Word|ChineseMeaning|EnglishSentence|ChineseTranslation. Strictly NO Korean."
+            # 修改提示词：单词给英文定义，句子给中文翻译
+            prompt = f"Output ONE random {st.session_state.mode} word. Format: Word|EnglishDefinition|EnglishSentence|ChineseTranslation."
             response = client.chat.completions.create(
                 model="deepseek-chat",
                 messages=[{"role": "user", "content": prompt}],
@@ -92,11 +97,10 @@ with col2:
             if len(res) >= 4:
                 st.session_state.data = {
                     "word": res[0].strip(),
-                    "mean": res[1].strip(),
+                    "def_en": res[1].strip(),
                     "sent_en": res[2].strip(),
                     "sent_cn": res[3].strip()
                 }
-                # 匹配发音人
                 v_map = {"考研": "en-GB-SoniaNeural", "IELTS": "en-GB-SoniaNeural", "TOEFL": "en-US-GuyNeural", "GRE": "en-US-GuyNeural"}
                 st.session_state.voice = v_map.get(st.session_state.mode, "en-US-GuyNeural")
         except:
@@ -108,15 +112,13 @@ if st.session_state.step >= 1 and st.session_state.data:
     data = st.session_state.data
     st.markdown(f'<div class="result-container"><div class="word-font">{data["word"]}</div></div>', unsafe_allow_html=True)
     
-    # 语音占位符
     audio_placeholder = st.empty()
     
     if st.session_state.step == 1:
-        if st.button("Check Meaning", key="nxt_2"):
+        if st.button("Check Definition", key="nxt_2"):
             st.session_state.step = 2
             st.rerun()
             
-        # 异步加载语音
         try:
             b64 = asyncio.run(get_voice_b64(data["word"], st.session_state.voice))
             if b64:
@@ -125,13 +127,15 @@ if st.session_state.step >= 1 and st.session_state.data:
             pass
 
     if st.session_state.step >= 2:
-        st.markdown(f'<div class="result-container"><div class="mean-font">{data["mean"]}</div></div>', unsafe_allow_html=True)
+        # 单词释义显示为英文
+        st.markdown(f'<div class="result-container"><div class="def-font">{data["def_en"]}</div></div>', unsafe_allow_html=True)
         if st.session_state.step == 2:
-            if st.button("Show Example", key="nxt_3"):
+            if st.button("Show Context", key="nxt_3"):
                 st.session_state.step = 3
                 st.rerun()
 
     if st.session_state.step == 3:
+        # 例句为英文，翻译为中文
         st.markdown(f'''<div class="example-container">
             <div class="example-en">{data["sent_en"]}</div>
             <div class="example-cn">{data["sent_cn"]}</div>
