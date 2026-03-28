@@ -24,7 +24,7 @@ async def get_voice_b64(text, voice):
     except:
         return None
 
-# 2. 样式
+# 2. 界面样式
 st.set_page_config(page_title="Flash Cards Pro", page_icon="💡", layout="centered")
 st.markdown("""
     <style>
@@ -36,21 +36,19 @@ st.markdown("""
     .main-btn>button { 
         width: 110px !important; height: 110px !important; font-size: 60px !important; 
         border-radius: 50% !important; border: 3px solid #1E3A8A !important; 
-        background: #ffffff !important; margin: 20px auto;
+        background: #ffffff !important; margin: 10px auto;
         box-shadow: 0 4px 15px rgba(30, 58, 138, 0.2);
     }
-    .word-font { font-size: 60px; font-weight: 900; color: #1E3A8A; text-align: center; margin-bottom: 0px; }
+    .word-font { font-size: 60px; font-weight: 900; color: #1E3A8A; text-align: center; }
     .def-font { font-size: 26px; color: #1E40AF; font-weight: 600; text-align: center; margin: 15px 0; font-family: 'serif'; }
     .example-container { background: #F8FAFC; border-left: 6px solid #1E3A8A; padding: 20px; margin-top: 20px; border-radius: 0 10px 10px 0; }
-    .audio-btn-row { display: flex; justify-content: center; margin-bottom: 10px; }
     </style>
     """, unsafe_allow_html=True)
 
-# 3. 状态管理
+# 3. 初始化状态
 if 'mode' not in st.session_state: st.session_state.mode = "GRE"
 if 'step' not in st.session_state: st.session_state.step = 0
 if 'data' not in st.session_state: st.session_state.data = None
-if 'audio_b64' not in st.session_state: st.session_state.audio_b64 = None
 
 # 4. 模式切换
 modes = ["考研", "IELTS", "TOEFL", "GRE"]
@@ -64,69 +62,67 @@ for i, m in enumerate(modes):
             st.session_state.data = None
             st.rerun()
 
-# 5. 核心灯泡逻辑 (通过动态 key 解决点不动的问题)
+# 5. 灯泡核心逻辑
 col1, col2, col3 = st.columns([1, 1, 1])
 with col2:
     st.markdown('<div class="main-btn">', unsafe_allow_html=True)
-    # 使用时间戳作为 key 强制刷新按钮状态
-    if st.button("💡", key=f"bulb_{int(time.time()/2)}"):
-        st.session_state.step = 1
-        st.session_state.data = None
-        st.session_state.audio_b64 = None
-        
-        fingerprint = secrets.token_hex(4)
-        try:
-            prompt = f"Target: {st.session_state.mode}. ID:{fingerprint}. One random word. Format: Word|EnglishDefinition|EnglishSentence|ChineseTranslation."
-            response = client.chat.completions.create(
-                model="deepseek-chat",
-                messages=[{"role": "user", "content": prompt}],
-                timeout=8.0,
-                temperature=1.3
-            )
-            res = response.choices[0].message.content.strip().replace("*", "").split("|")
-            if len(res) >= 4:
-                st.session_state.data = {
-                    "word": res[0].strip(), "def_en": res[1].strip(),
-                    "sent_en": res[2].strip(), "sent_cn": res[3].strip()
-                }
-                v_map = {"考研": "en-GB-SoniaNeural", "IELTS": "en-GB-SoniaNeural", "TOEFL": "en-US-GuyNeural", "GRE": "en-US-GuyNeural"}
-                voice = v_map.get(st.session_state.mode, "en-US-GuyNeural")
-                # 提前加载音频
-                st.session_state.audio_b64 = asyncio.run(get_voice_b64(res[0].strip(), voice))
-        except:
-            st.error("Connection Busy. Try again! 💡")
+    # 使用动态 Key 确保每次点击都被 Streamlit 捕获
+    if st.button("💡", key=f"btn_{time.time()}"):
+        with st.spinner(''): # 增加微小的加载提示
+            st.session_state.step = 1
+            st.session_state.data = None
+            
+            fingerprint = secrets.token_hex(4)
+            try:
+                # 极其简短的 Prompt 减少 AI 响应时间
+                response = client.chat.completions.create(
+                    model="deepseek-chat",
+                    messages=[{"role": "user", "content": f"Random {st.session_state.mode} word {fingerprint}. Format: Word|EnglishDef|Sentence|Translation."}],
+                    timeout=5.0 # 强制 5 秒超时，不出来就报错
+                )
+                res = response.choices[0].message.content.strip().replace("*", "").split("|")
+                if len(res) >= 4:
+                    st.session_state.data = {
+                        "word": res[0].strip(), "def_en": res[1].strip(),
+                        "sent_en": res[2].strip(), "sent_cn": res[3].strip()
+                    }
+                    v_map = {"考研": "en-GB-SoniaNeural", "IELTS": "en-GB-SoniaNeural", "TOEFL": "en-US-GuyNeural", "GRE": "en-US-GuyNeural"}
+                    st.session_state.voice_name = v_map.get(st.session_state.mode, "en-US-GuyNeural")
+            except Exception as e:
+                st.toast("DeepSeek 服务器忙，请再点一次灯泡 💡", icon="⏳")
     st.markdown('</div>', unsafe_allow_html=True)
 
-# 6. 渲染
+# 6. 结果渲染
 if st.session_state.step >= 1 and st.session_state.data:
     data = st.session_state.data
     st.markdown(f'<div class="word-font">{data["word"]}</div>', unsafe_allow_html=True)
     
-    # 手机端音频修复方案：增加手动播放按钮
-    if st.session_state.audio_b64:
-        b64 = st.session_state.audio_b64
-        audio_html = f'''
-            <div class="audio-btn-row">
-                <audio id="v_audio" autoplay playsinline><source src="data:audio/mp3;base64,{b64}"></audio>
-                <button onclick="document.getElementById('v_audio').play()" style="background:none;border:none;font-size:24px;cursor:pointer;">🔊</button>
-            </div>
-        '''
-        st.markdown(audio_html, unsafe_allow_html=True)
-    
+    # 音频逻辑：在用户点击按钮后触发，兼容手机
     if st.session_state.step == 1:
-        if st.button("Check Definition", key="nxt_2"):
+        if st.button("Check Definition", key="go_step_2"):
+            # 只有用户交互后才生成/播放音频，解决手机没声问题
             st.session_state.step = 2
             st.rerun()
-
+            
     if st.session_state.step >= 2:
+        # 显示释义并播放声音
         st.markdown(f'<div class="def-font">{data["def_en"]}</div>', unsafe_allow_html=True)
+        
+        # 语音播放
+        try:
+            b64 = asyncio.run(get_voice_b64(data["word"], st.session_state.voice_name))
+            if b64:
+                st.markdown(f'<audio autoplay><source src="data:audio/mp3;base64,{b64}"></audio>', unsafe_allow_html=True)
+        except:
+            pass
+
         if st.session_state.step == 2:
-            if st.button("Show Context", key="nxt_3"):
+            if st.button("Show Context", key="go_step_3"):
                 st.session_state.step = 3
                 st.rerun()
 
     if st.session_state.step == 3:
         st.markdown(f'''<div class="example-container">
-            <div style="font-size:20px; font-style:italic; line-height:1.5;">{data["sent_en"]}</div>
-            <div style="font-size:17px; color:#64748B; margin-top:12px;">{data["sent_cn"]}</div>
+            <div style="font-size:20px; font-style:italic;">{data["sent_en"]}</div>
+            <div style="font-size:17px; color:#64748B; margin-top:10px;">{data["sent_cn"]}</div>
         </div>''', unsafe_allow_html=True)
