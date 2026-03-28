@@ -4,7 +4,7 @@ import edge_tts
 import asyncio
 import base64
 import time
-import secrets # 引入更安全的随机库
+import secrets
 from openai import OpenAI
 
 # 1. 配置
@@ -40,17 +40,10 @@ st.markdown("""
         width: 110px !important; height: 110px !important; font-size: 60px !important; 
         border-radius: 50% !important; border: 3px solid #1E3A8A !important; 
         background: #ffffff !important; margin: 20px auto;
-        box-shadow: 0 4px 15px rgba(30, 58, 138, 0.2);
     }
-    .result-container { text-align: center; margin-top: 20px; }
-    .word-font { font-size: 65px; font-weight: 900; color: #1E3A8A; letter-spacing: -1px; }
-    .def-font { font-size: 26px; color: #1E40AF; font-weight: 600; margin: 15px 0; line-height: 1.3; }
-    .example-container { 
-        background: #F8FAFC; border-left: 6px solid #1E3A8A; 
-        padding: 20px; margin-top: 20px; border-radius: 0 10px 10px 0; text-align: left;
-    }
-    .example-en { font-size: 20px; color: #1e293b; font-style: italic; line-height: 1.5; }
-    .example-cn { font-size: 17px; color: #64748B; margin-top: 10px; }
+    .word-font { font-size: 60px; font-weight: 900; color: #1E3A8A; text-align: center; }
+    .def-font { font-size: 26px; color: #1E40AF; font-weight: 600; text-align: center; margin: 15px 0; }
+    .example-container { background: #F8FAFC; border-left: 6px solid #1E3A8A; padding: 20px; margin-top: 20px; border-radius: 0 10px 10px 0; }
     </style>
     """, unsafe_allow_html=True)
 
@@ -71,33 +64,27 @@ for i, m in enumerate(modes):
             st.session_state.data = None
             st.rerun()
 
-# 5. 抽词逻辑 (增加指纹随机性)
+# 5. 抽词逻辑
 col1, col2, col3 = st.columns([1, 1, 1])
 with col2:
     st.markdown('<div class="main-btn">', unsafe_allow_html=True)
     if st.button("💡"):
         st.session_state.step = 1
         st.session_state.data = None
-        
-        # 生成唯一的随机指纹，防止多端同步
-        fingerprint = secrets.token_hex(4) 
-        
+        fingerprint = secrets.token_hex(4)
         try:
-            prompt = f"Target: {st.session_state.mode}. UID: {fingerprint}. Task: Provide 1 truly RANDOM word. Format: Word|EnglishDefinition|EnglishSentence|ChineseTranslation."
+            prompt = f"Target: {st.session_state.mode}. ID: {fingerprint}. One random word. Format: Word|EnglishDefinition|EnglishSentence|ChineseTranslation."
             response = client.chat.completions.create(
                 model="deepseek-chat",
                 messages=[{"role": "user", "content": prompt}],
                 timeout=7.0,
-                temperature=1.3 # 进一步调高随机权重
+                temperature=1.3
             )
-            raw = response.choices[0].message.content.strip()
-            res = raw.replace("*", "").split("|")
+            res = response.choices[0].message.content.strip().replace("*", "").split("|")
             if len(res) >= 4:
                 st.session_state.data = {
-                    "word": res[0].strip(),
-                    "def_en": res[1].strip(),
-                    "sent_en": res[2].strip(),
-                    "sent_cn": res[3].strip()
+                    "word": res[0].strip(), "def_en": res[1].strip(),
+                    "sent_en": res[2].strip(), "sent_cn": res[3].strip()
                 }
                 v_map = {"考研": "en-GB-SoniaNeural", "IELTS": "en-GB-SoniaNeural", "TOEFL": "en-US-GuyNeural", "GRE": "en-US-GuyNeural"}
                 st.session_state.voice = v_map.get(st.session_state.mode, "en-US-GuyNeural")
@@ -105,17 +92,32 @@ with col2:
             st.error("Busy...")
     st.markdown('</div>', unsafe_allow_html=True)
 
-# 6. 渲染
+# 6. 渲染与手机音频修复
 if st.session_state.step >= 1 and st.session_state.data:
     data = st.session_state.data
-    st.markdown(f'<div class="result-container"><div class="word-font">{data["word"]}</div></div>', unsafe_allow_html=True)
+    st.markdown(f'<div class="word-font">{data["word"]}</div>', unsafe_allow_html=True)
     
     if st.session_state.step == 1:
+        # --- 修复手机发声的关键 HTML ---
         audio_placeholder = st.empty()
         try:
             b64 = asyncio.run(get_voice_b64(data["word"], st.session_state.voice))
             if b64:
-                audio_placeholder.markdown(f'<audio autoplay><source src="data:audio/mp3;base64,{b64}"></audio>', unsafe_allow_html=True)
+                # 增加 playsinline, webkit-playsinline 和自动播放脚本
+                audio_html = f'''
+                    <audio id="vocab-audio" autoplay playsinline webkit-playsinline>
+                        <source src="data:audio/mp3;base64,{b64}" type="audio/mp3">
+                    </audio>
+                    <script>
+                        var audio = document.getElementById("vocab-audio");
+                        audio.play();
+                        // 兼容微信/Safari的手势激活
+                        document.addEventListener("WeixinJSBridgeReady", function () {{
+                            audio.play();
+                        }}, false);
+                    </script>
+                '''
+                audio_placeholder.markdown(audio_html, unsafe_allow_html=True)
         except:
             pass
             
@@ -124,7 +126,7 @@ if st.session_state.step >= 1 and st.session_state.data:
             st.rerun()
 
     if st.session_state.step >= 2:
-        st.markdown(f'<div class="result-container"><div class="def-font">{data["def_en"]}</div></div>', unsafe_allow_html=True)
+        st.markdown(f'<div class="def-font">{data["def_en"]}</div>', unsafe_allow_html=True)
         if st.session_state.step == 2:
             if st.button("Show Context", key="nxt_3"):
                 st.session_state.step = 3
@@ -132,6 +134,6 @@ if st.session_state.step >= 1 and st.session_state.data:
 
     if st.session_state.step == 3:
         st.markdown(f'''<div class="example-container">
-            <div class="example-en">{data["sent_en"]}</div>
-            <div class="example-cn">{data["sent_cn"]}</div>
+            <div style="font-size:19px; font-style:italic;">{data["sent_en"]}</div>
+            <div style="font-size:16px; color:#64748B; margin-top:10px;">{data["sent_cn"]}</div>
         </div>''', unsafe_allow_html=True)
