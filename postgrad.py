@@ -1,12 +1,11 @@
 import streamlit as st
-import random
-import edge_tts
 import asyncio
 import base64
-import time
 import secrets
 import string
+import random
 from openai import OpenAI
+import edge_tts
 
 # 1. 配置
 client = OpenAI(
@@ -25,31 +24,33 @@ async def get_voice_b64(text, voice):
     except:
         return None
 
-# 核心：绝对随机抽词逻辑
-def fetch_new_word():
-    # 策略 A: 生成强随机指纹
-    fingerprint = secrets.token_hex(8) 
-    # 策略 B: 随机抽取一个起始字母，强迫 AI 跳出常用词库
-    random_letter = random.choice(string.ascii_uppercase)
-    # 策略 C: 随机偏移量
-    random_skip = random.randint(1, 500)
+# 核心：获取单词数据的统一函数（支持随机和搜索）
+def fetch_word_data(query=None):
+    fingerprint = secrets.token_hex(8)
+    # 如果 query 为 None，则执行随机逻辑
+    if query:
+        target_task = f"Provide details for the specific word: '{query}'."
+        temp = 0.3 # 查词需要准确，降低随机性
+    else:
+        random_letter = random.choice(string.ascii_uppercase)
+        target_task = f"Provide 1 TRULY RANDOM word (try starting with {random_letter}). Avoid common ones."
+        temp = 1.5 # 抽词需要惊喜，提高随机性
 
     try:
-        # 在 Prompt 中加入随机约束：UID、随机字母偏好、以及强制多样性指令
         prompt = (
             f"Mode: {st.session_state.mode}. UID: {fingerprint}. "
-            f"Instruction: Pick a TRULY RANDOM word (perhaps starting with '{random_letter}' or related to skip-index {random_skip}). "
-            f"Avoid common words. Format: Word|Phonetic|EnglishDefinition|EnglishSentence|ChineseTranslation."
+            f"Task: {target_task} "
+            f"Format: Word|Phonetic|EnglishDefinition|EnglishSentence|ChineseTranslation"
         )
         
         response = client.chat.completions.create(
             model="deepseek-chat",
             messages=[
-                {"role": "system", "content": "You are a dictionary engine. You must output 1 unexpected, non-repetitive word. NO YAPPING. Format: Word|Phonetic|EnglishDefinition|EnglishSentence|ChineseTranslation"},
+                {"role": "system", "content": "You are a precise dictionary. Output ONLY the pipe-separated format. No extra text."},
                 {"role": "user", "content": prompt}
             ],
             timeout=10.0,
-            temperature=1.5 # 调高到 1.5，极高随机性
+            temperature=temp
         )
         raw = response.choices[0].message.content.strip()
         res = raw.replace("*", "").split("|")
@@ -65,71 +66,70 @@ def fetch_new_word():
             v_map = {"考研": "en-GB-SoniaNeural", "IELTS": "en-GB-SoniaNeural", "TOEFL": "en-US-GuyNeural", "GRE": "en-US-GuyNeural"}
             st.session_state.voice = v_map.get(st.session_state.mode, "en-US-GuyNeural")
             st.session_state.step = 1
+        else:
+            st.error("Word not found or format error.")
     except Exception as e:
-        st.error(f"Random Engine Glitch: {e}")
+        st.error(f"Error: {e}")
 
-# 2. 增强版样式
+# 2. 样式
 st.set_page_config(page_title="Flash Cards Pro", page_icon="💡", layout="centered")
 st.markdown("""
     <style>
     #MainMenu, footer, header, .stDeployButton {visibility: hidden;}
     [data-testid="stSidebar"] {display: none;}
     
-    @keyframes fadeIn {
-        from { opacity: 0; transform: translateY(12px); }
-        to { opacity: 1; transform: translateY(0); }
+    /* 搜索栏样式微调 */
+    .stTextInput>div>div>input {
+        border-radius: 12px !important;
+        border: 2px solid #E2E8F0 !important;
+        padding: 10px 15px !important;
     }
+
+    @keyframes fadeIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
     .fade-in { animation: fadeIn 0.4s ease-out; }
 
     .stButton>button { 
         width: 100%; border-radius: 14px !important; border: none !important;
-        height: 3.6rem; font-weight: 600 !important; transition: all 0.25s ease !important;
+        height: 3.5rem; font-weight: 600 !important; transition: all 0.2s;
         background-color: #F8FAFC !important; color: #475569 !important;
-        box-shadow: 0 2px 4px rgba(0,0,0,0.02) !important;
     }
     
-    .stButton>button:hover {
-        transform: translateY(-2px);
-        box-shadow: 0 6px 15px rgba(30, 58, 138, 0.1) !important;
-        background-color: #F1F5F9 !important;
-    }
-
     div.stButton > button:first-child[kind="primary"] {
         background: linear-gradient(135deg, #1E3A8A 0%, #2563EB 100%) !important;
         color: white !important;
     }
     
     .main-btn>button { 
-        width: 120px !important; height: 120px !important; font-size: 60px !important; 
-        border-radius: 50% !important; border: 8px solid #F0F7FF !important; 
-        background: #ffffff !important; margin: 30px auto;
-        box-shadow: 0 12px 24px rgba(30, 58, 138, 0.12) !important;
+        width: 110px !important; height: 110px !important; font-size: 55px !important; 
+        border-radius: 50% !important; border: 6px solid #F0F7FF !important; 
+        background: white !important; margin: 10px auto;
+        box-shadow: 0 10px 20px rgba(30, 58, 138, 0.1) !important;
     }
     
     .word-card {
-        background: white; padding: 45px 20px; border-radius: 28px;
-        text-align: center; box-shadow: 0 15px 35px rgba(30, 58, 138, 0.05); margin: 25px 0;
+        background: white; padding: 40px 20px; border-radius: 24px;
+        text-align: center; box-shadow: 0 10px 30px rgba(0,0,0,0.04); margin: 20px 0;
     }
-
-    .word-font { font-size: 64px; font-weight: 900; color: #1E3A8A; letter-spacing: -2px; line-height: 1; }
-    .phonetic-font { font-size: 24px; color: #94A3B8; margin-top: 10px; margin-bottom: 25px; font-family: sans-serif; }
-    .def-font { font-size: 26px; color: #1E40AF; font-weight: 600; margin: 25px 0; line-height: 1.4; padding: 0 20px; }
-    
-    .example-container { 
-        background: #F8FAFC; border-left: 6px solid #2563EB; 
-        padding: 24px; margin-top: 25px; border-radius: 12px; text-align: left;
-    }
-    .example-en { font-size: 20px; color: #1e293b; font-style: italic; line-height: 1.6; }
-    .example-cn { font-size: 17px; color: #64748B; margin-top: 12px; }
+    .word-font { font-size: 55px; font-weight: 900; color: #1E3A8A; letter-spacing: -1.5px; }
+    .phonetic-font { font-size: 20px; color: #94A3B8; margin-bottom: 10px; }
+    .def-font { font-size: 22px; color: #1E40AF; font-weight: 600; margin: 15px 0; line-height: 1.4; }
+    .example-container { background: #F8FAFC; border-left: 5px solid #2563EB; padding: 20px; border-radius: 10px; }
     </style>
     """, unsafe_allow_html=True)
 
-# 3. 状态初始化
+# 3. 状态
 if 'mode' not in st.session_state: st.session_state.mode = "GRE"
 if 'step' not in st.session_state: st.session_state.step = 0
 if 'data' not in st.session_state: st.session_state.data = None
 
-# 4. 模式切换
+# 4. 顶部：搜索栏 & 模式
+search_query = st.text_input("", placeholder="🔍 Search a word (e.g. 'Serendipity')...", key="search_bar")
+if search_query:
+    if st.session_state.get('last_query') != search_query:
+        st.session_state.last_query = search_query
+        fetch_word_data(search_query)
+        st.rerun()
+
 modes = ["考研", "IELTS", "TOEFL", "GRE"]
 cols = st.columns(len(modes))
 for i, m in enumerate(modes):
@@ -140,20 +140,19 @@ for i, m in enumerate(modes):
             st.session_state.data = None
             st.rerun()
 
-# 5. 初始界面
+# 5. 初始/抽词按钮
 if st.session_state.step == 0:
-    st.write(" ")
     st.write(" ")
     col1, col2, col3 = st.columns([1, 1, 1])
     with col2:
         st.markdown('<div class="main-btn">', unsafe_allow_html=True)
         if st.button("💡"):
-            fetch_new_word()
+            fetch_word_data()
             st.rerun()
         st.markdown('</div>', unsafe_allow_html=True)
-    st.markdown("<p style='text-align: center; color: #94A3B8;'>Click the bulb to start random learning</p>", unsafe_allow_html=True)
+    st.markdown("<p style='text-align: center; color: #94A3B8;'>Click the bulb to draw or type above to search</p>", unsafe_allow_html=True)
 
-# 6. 核心渲染
+# 6. 内容渲染
 if st.session_state.step >= 1 and st.session_state.data:
     data = st.session_state.data
     
@@ -193,6 +192,6 @@ if st.session_state.step >= 1 and st.session_state.data:
         </div>''', unsafe_allow_html=True)
         
         st.write(" ") 
-        if st.button("Next Word ➔", key="btn_reset"):
-            fetch_new_word() # 内部已含 step = 1
+        if st.button("Next Random Word ➔", key="btn_reset"):
+            fetch_word_data()
             st.rerun()
