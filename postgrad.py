@@ -5,6 +5,7 @@ import asyncio
 import base64
 import time
 import secrets
+import string
 from openai import OpenAI
 
 # 1. 配置
@@ -24,86 +25,102 @@ async def get_voice_b64(text, voice):
     except:
         return None
 
+# 核心：绝对随机抽词逻辑
+def fetch_new_word():
+    # 策略 A: 生成强随机指纹
+    fingerprint = secrets.token_hex(8) 
+    # 策略 B: 随机抽取一个起始字母，强迫 AI 跳出常用词库
+    random_letter = random.choice(string.ascii_uppercase)
+    # 策略 C: 随机偏移量
+    random_skip = random.randint(1, 500)
+
+    try:
+        # 在 Prompt 中加入随机约束：UID、随机字母偏好、以及强制多样性指令
+        prompt = (
+            f"Mode: {st.session_state.mode}. UID: {fingerprint}. "
+            f"Instruction: Pick a TRULY RANDOM word (perhaps starting with '{random_letter}' or related to skip-index {random_skip}). "
+            f"Avoid common words. Format: Word|Phonetic|EnglishDefinition|EnglishSentence|ChineseTranslation."
+        )
+        
+        response = client.chat.completions.create(
+            model="deepseek-chat",
+            messages=[
+                {"role": "system", "content": "You are a dictionary engine. You must output 1 unexpected, non-repetitive word. NO YAPPING. Format: Word|Phonetic|EnglishDefinition|EnglishSentence|ChineseTranslation"},
+                {"role": "user", "content": prompt}
+            ],
+            timeout=10.0,
+            temperature=1.5 # 调高到 1.5，极高随机性
+        )
+        raw = response.choices[0].message.content.strip()
+        res = raw.replace("*", "").split("|")
+        
+        if len(res) >= 5:
+            st.session_state.data = {
+                "word": res[0].strip(),
+                "phonetic": res[1].strip(),
+                "def_en": res[2].strip(),
+                "sent_en": res[3].strip(),
+                "sent_cn": res[4].strip()
+            }
+            v_map = {"考研": "en-GB-SoniaNeural", "IELTS": "en-GB-SoniaNeural", "TOEFL": "en-US-GuyNeural", "GRE": "en-US-GuyNeural"}
+            st.session_state.voice = v_map.get(st.session_state.mode, "en-US-GuyNeural")
+            st.session_state.step = 1
+    except Exception as e:
+        st.error(f"Random Engine Glitch: {e}")
+
 # 2. 增强版样式
 st.set_page_config(page_title="Flash Cards Pro", page_icon="💡", layout="centered")
 st.markdown("""
     <style>
-    /* 隐藏多余组件 */
     #MainMenu, footer, header, .stDeployButton {visibility: hidden;}
     [data-testid="stSidebar"] {display: none;}
     
-    /* 基础按钮美化 */
-    .stButton>button { 
-        width: 100%; 
-        border-radius: 12px !important; 
-        border: none !important;
-        height: 3.2rem;
-        font-weight: 600 !important;
-        transition: all 0.3s ease !important;
+    @keyframes fadeIn {
+        from { opacity: 0; transform: translateY(12px); }
+        to { opacity: 1; transform: translateY(0); }
     }
-    
-    /* 普通按钮状态 */
-    .stButton>button {
-        background-color: #F1F5F9 !important;
-        color: #475569 !important;
+    .fade-in { animation: fadeIn 0.4s ease-out; }
+
+    .stButton>button { 
+        width: 100%; border-radius: 14px !important; border: none !important;
+        height: 3.6rem; font-weight: 600 !important; transition: all 0.25s ease !important;
+        background-color: #F8FAFC !important; color: #475569 !important;
+        box-shadow: 0 2px 4px rgba(0,0,0,0.02) !important;
     }
     
     .stButton>button:hover {
         transform: translateY(-2px);
-        box-shadow: 0 4px 12px rgba(0,0,0,0.1) !important;
-        background-color: #E2E8F0 !important;
+        box-shadow: 0 6px 15px rgba(30, 58, 138, 0.1) !important;
+        background-color: #F1F5F9 !important;
     }
 
-    /* 模式切换激活状态 */
     div.stButton > button:first-child[kind="primary"] {
-        background: linear-gradient(135deg, #1E3A8A 0%, #3B82F6 100%) !important;
+        background: linear-gradient(135deg, #1E3A8A 0%, #2563EB 100%) !important;
         color: white !important;
-        box-shadow: 0 4px 15px rgba(30, 58, 138, 0.3) !important;
     }
     
-    /* 💡 中心灯泡按钮 */
     .main-btn>button { 
-        width: 110px !important; height: 110px !important; 
-        font-size: 55px !important; 
-        border-radius: 50% !important; 
-        border: 6px solid #EEF2FF !important; 
-        background: #ffffff !important; 
-        margin: 20px auto;
-        box-shadow: 0 8px 20px rgba(30, 58, 138, 0.15) !important;
-        transition: all 0.4s cubic-bezier(0.175, 0.885, 0.32, 1.275) !important;
+        width: 120px !important; height: 120px !important; font-size: 60px !important; 
+        border-radius: 50% !important; border: 8px solid #F0F7FF !important; 
+        background: #ffffff !important; margin: 30px auto;
+        box-shadow: 0 12px 24px rgba(30, 58, 138, 0.12) !important;
     }
     
-    .main-btn>button:hover {
-        transform: scale(1.1) rotate(5deg) !important;
-        border-color: #DBEafe !important;
-    }
-
-    /* 卡片式容器 */
     .word-card {
-        background: white;
-        padding: 40px 20px;
-        border-radius: 24px;
-        text-align: center;
-        box-shadow: 0 10px 25px rgba(0,0,0,0.03);
-        margin: 20px 0;
+        background: white; padding: 45px 20px; border-radius: 28px;
+        text-align: center; box-shadow: 0 15px 35px rgba(30, 58, 138, 0.05); margin: 25px 0;
     }
 
-    /* 文本字体 */
-    .word-font { font-size: 60px; font-weight: 900; color: #1E3A8A; letter-spacing: -2px; margin-bottom: 5px; }
-    .phonetic-font { font-size: 22px; color: #64748B; font-family: 'Helvetica Neue', sans-serif; margin-bottom: 20px; }
-    .def-font { font-size: 24px; color: #1E40AF; font-weight: 600; margin: 20px 0; line-height: 1.4; }
+    .word-font { font-size: 64px; font-weight: 900; color: #1E3A8A; letter-spacing: -2px; line-height: 1; }
+    .phonetic-font { font-size: 24px; color: #94A3B8; margin-top: 10px; margin-bottom: 25px; font-family: sans-serif; }
+    .def-font { font-size: 26px; color: #1E40AF; font-weight: 600; margin: 25px 0; line-height: 1.4; padding: 0 20px; }
     
-    /* 例句样式 */
     .example-container { 
-        background: #F8FAFC; 
-        border-left: 6px solid #3B82F6; 
-        padding: 20px; 
-        margin-top: 25px; 
-        border-radius: 8px; 
-        text-align: left;
+        background: #F8FAFC; border-left: 6px solid #2563EB; 
+        padding: 24px; margin-top: 25px; border-radius: 12px; text-align: left;
     }
-    .example-en { font-size: 19px; color: #1e293b; font-style: italic; line-height: 1.6; }
-    .example-cn { font-size: 16px; color: #64748B; margin-top: 10px; }
+    .example-en { font-size: 20px; color: #1e293b; font-style: italic; line-height: 1.6; }
+    .example-cn { font-size: 17px; color: #64748B; margin-top: 12px; }
     </style>
     """, unsafe_allow_html=True)
 
@@ -117,65 +134,40 @@ modes = ["考研", "IELTS", "TOEFL", "GRE"]
 cols = st.columns(len(modes))
 for i, m in enumerate(modes):
     with cols[i]:
-        is_active = st.session_state.mode == m
-        if st.button(m, key=f"m_{m}", type="primary" if is_active else "secondary"):
+        if st.button(m, key=f"m_{m}", type="primary" if st.session_state.mode == m else "secondary"):
             st.session_state.mode = m
             st.session_state.step = 0
             st.session_state.data = None
             st.rerun()
 
-# 5. 抽词逻辑
-col1, col2, col3 = st.columns([1, 1, 1])
-with col2:
-    st.markdown('<div class="main-btn">', unsafe_allow_html=True)
-    if st.button("💡"):
-        st.session_state.step = 1
-        st.session_state.data = None
-        
-        fingerprint = secrets.token_hex(4) 
-        
-        try:
-            prompt = f"Target: {st.session_state.mode}. UID: {fingerprint}. Task: Provide 1 truly RANDOM word. Format: Word|Phonetic|EnglishDefinition|EnglishSentence|ChineseTranslation."
-            response = client.chat.completions.create(
-                model="deepseek-chat",
-                messages=[{"role": "system", "content": "You are a vocabulary expert. Always respond in the pipe-separated format."},
-                          {"role": "user", "content": prompt}],
-                timeout=8.0,
-                temperature=1.3
-            )
-            raw = response.choices[0].message.content.strip()
-            res = raw.replace("*", "").split("|")
-            
-            if len(res) >= 5:
-                st.session_state.data = {
-                    "word": res[0].strip(),
-                    "phonetic": res[1].strip(),
-                    "def_en": res[2].strip(),
-                    "sent_en": res[3].strip(),
-                    "sent_cn": res[4].strip()
-                }
-                v_map = {"考研": "en-GB-SoniaNeural", "IELTS": "en-GB-SoniaNeural", "TOEFL": "en-US-GuyNeural", "GRE": "en-US-GuyNeural"}
-                st.session_state.voice = v_map.get(st.session_state.mode, "en-US-GuyNeural")
-        except:
-            st.error("API Limit or Connection Error. Try again.")
-    st.markdown('</div>', unsafe_allow_html=True)
+# 5. 初始界面
+if st.session_state.step == 0:
+    st.write(" ")
+    st.write(" ")
+    col1, col2, col3 = st.columns([1, 1, 1])
+    with col2:
+        st.markdown('<div class="main-btn">', unsafe_allow_html=True)
+        if st.button("💡"):
+            fetch_new_word()
+            st.rerun()
+        st.markdown('</div>', unsafe_allow_html=True)
+    st.markdown("<p style='text-align: center; color: #94A3B8;'>Click the bulb to start random learning</p>", unsafe_allow_html=True)
 
-# 6. 渲染内容
+# 6. 核心渲染
 if st.session_state.step >= 1 and st.session_state.data:
     data = st.session_state.data
     
-    # 核心卡片区域
     st.markdown(f'''
-        <div class="word-card">
-            <div class="word-font">{data["word"]}</div>
-            <div class="phonetic-font">/{data["phonetic"]}/</div>
+        <div class="fade-in">
+            <div class="word-card">
+                <div class="word-font">{data["word"]}</div>
+                <div class="phonetic-font">/{data["phonetic"]}/</div>
+            </div>
         </div>
     ''', unsafe_allow_html=True)
     
-    # 步骤控制
-    # ---------------------------
-    # Step 1: 单词出现 (自动发音)
     if st.session_state.step == 1:
+        # 自动播放音频
         audio_placeholder = st.empty()
         try:
             b64 = asyncio.run(get_voice_b64(data["word"], st.session_state.voice))
@@ -187,24 +179,20 @@ if st.session_state.step >= 1 and st.session_state.data:
             st.session_state.step = 2
             st.rerun()
 
-    # Step 2: 释义展示
     if st.session_state.step >= 2:
-        st.markdown(f'<div class="def-font">{data["def_en"]}</div>', unsafe_allow_html=True)
-        
+        st.markdown(f'<div class="fade-in def-font">{data["def_en"]}</div>', unsafe_allow_html=True)
         if st.session_state.step == 2:
             if st.button("Show Example 💡", key="btn_step_3"):
                 st.session_state.step = 3
                 st.rerun()
 
-    # Step 3: 例句展示
     if st.session_state.step == 3:
-        st.markdown(f'''<div class="example-container">
+        st.markdown(f'''<div class="fade-in example-container">
             <div class="example-en">{data["sent_en"]}</div>
             <div class="example-cn">{data["sent_cn"]}</div>
         </div>''', unsafe_allow_html=True)
         
-        st.write(" ") # 间距
+        st.write(" ") 
         if st.button("Next Word ➔", key="btn_reset"):
-            st.session_state.step = 0
-            st.session_state.data = None
+            fetch_new_word() # 内部已含 step = 1
             st.rerun()
