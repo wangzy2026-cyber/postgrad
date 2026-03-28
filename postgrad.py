@@ -1,28 +1,55 @@
 import streamlit as st
 import random
+import edge_tts
+import asyncio
+import base64
 import time
 from openai import OpenAI
 
-# 1. 核心配置 (去掉语音以榨取极限速度)
+# 1. 配置
 client = OpenAI(
     api_key=st.secrets["api_key"], 
     base_url="https://api.deepseek.com"
 )
 
-# 2. 样式：极简就是快
+# 快速语音合成
+async def get_voice_b64(text, voice):
+    try:
+        communicate = edge_tts.Communicate(text, voice, rate="+10%")
+        audio_data = b""
+        async for chunk in communicate.stream():
+            if chunk["type"] == "audio":
+                audio_data += chunk["data"]
+        return base64.b64encode(audio_data).decode()
+    except:
+        return None
+
+# 2. 样式：增加模式高亮逻辑
 st.set_page_config(page_title="Flash Cards", page_icon="⚡", layout="centered")
 st.markdown("""
     <style>
     #MainMenu, footer, header, .stDeployButton {visibility: hidden;}
     [data-testid="stSidebar"] {display: none;}
-    .stButton { display: flex; justify-content: center; }
+    
+    /* 模式切换按钮样式 */
+    .stButton>button { width: 100%; border-radius: 8px; font-weight: bold; transition: 0.2s; }
+    
+    /* 核心闪电按钮 */
     .main-btn>button { 
-        width: 100px; height: 100px; font-size: 50px !important; 
-        border-radius: 50%; border: 3px solid #1E3A8A; background: #fff;
+        width: 110px !important; height: 110px !important; font-size: 60px !important; 
+        border-radius: 50% !important; border: 3px solid #1E3A8A !important; 
+        background: #ffffff !important; margin: 20px auto;
     }
-    .word-font { font-size: 60px; font-weight: 900; color: #1E3A8A; text-align: center; margin-top: 20px; }
-    .mean-font { font-size: 30px; color: #B91C1C; font-weight: bold; text-align: center; margin-top: 10px; }
-    .example-container { background: #F8FAFC; border-left: 5px solid #1E3A8A; padding: 15px; border-radius: 8px; margin-top: 20px; text-align: left; }
+    
+    .result-container { text-align: center; margin-top: 20px; }
+    .word-font { font-size: 65px; font-weight: 900; color: #1E3A8A; letter-spacing: -1px; margin-bottom: 5px; }
+    .mean-font { font-size: 32px; color: #B91C1C; font-weight: bold; margin: 15px 0; }
+    .example-container { 
+        background: #F8FAFC; border-left: 6px solid #1E3A8A; 
+        padding: 20px; margin-top: 20px; border-radius: 0 10px 10px 0; text-align: left;
+    }
+    .example-en { font-size: 20px; color: #1e293b; font-style: italic; line-height: 1.5; font-family: 'Georgia', serif; }
+    .example-cn { font-size: 17px; color: #64748B; margin-top: 10px; }
     </style>
     """, unsafe_allow_html=True)
 
@@ -31,18 +58,20 @@ if 'mode' not in st.session_state: st.session_state.mode = "GRE"
 if 'step' not in st.session_state: st.session_state.step = 0
 if 'data' not in st.session_state: st.session_state.data = None
 
-# 4. 模式切换
+# 4. 模式切换（带高亮区分）
 modes = ["考研", "IELTS", "TOEFL", "GRE"]
 cols = st.columns(len(modes))
 for i, m in enumerate(modes):
     with cols[i]:
-        if st.button(m, key=f"m_{m}"):
+        # 如果是当前模式，按钮样式变深色
+        is_active = st.session_state.mode == m
+        if st.button(m, key=f"m_{m}", type="primary" if is_active else "secondary"):
             st.session_state.mode = m
             st.session_state.step = 0
             st.session_state.data = None
             st.rerun()
 
-# 5. 极速抽词逻辑
+# 5. 极速抽词
 col1, col2, col3 = st.columns([1, 1, 1])
 with col2:
     st.markdown('<div class="main-btn">', unsafe_allow_html=True)
@@ -50,20 +79,16 @@ with col2:
         st.session_state.step = 1
         st.session_state.data = None
         
-        # 强制 API 极简返回
         try:
-            # 加入当前时间戳作为随机盐
+            # 强化中文指令，严禁韩语
+            prompt = f"Output ONE random {st.session_state.mode} word. Format: Word|ChineseMeaning|EnglishSentence|ChineseTranslation. Strictly NO Korean."
             response = client.chat.completions.create(
                 model="deepseek-chat",
-                messages=[{"role": "user", "content": f"Output 1 random {st.session_state.mode} word. Format: Word|Meaning|AcademicSentence|Translation. No other words."}],
-                timeout=6.0,
-                temperature=1.0 # 增加随机性
+                messages=[{"role": "user", "content": prompt}],
+                timeout=7.0
             )
             raw = response.choices[0].message.content.strip()
-            # 清理可能存在的星号或废话
-            clean_raw = raw.replace("*", "").replace("Word:", "").replace("Meaning:", "")
-            res = clean_raw.split("|")
-            
+            res = raw.replace("*", "").split("|")
             if len(res) >= 4:
                 st.session_state.data = {
                     "word": res[0].strip(),
@@ -71,8 +96,9 @@ with col2:
                     "sent_en": res[2].strip(),
                     "sent_cn": res[3].strip()
                 }
-            else:
-                st.write("Retrying...") # 格式不对自动提示
+                # 匹配发音人
+                v_map = {"考研": "en-GB-SoniaNeural", "IELTS": "en-GB-SoniaNeural", "TOEFL": "en-US-GuyNeural", "GRE": "en-US-GuyNeural"}
+                st.session_state.voice = v_map.get(st.session_state.mode, "en-US-GuyNeural")
         except:
             st.error("API Busy")
     st.markdown('</div>', unsafe_allow_html=True)
@@ -80,17 +106,26 @@ with col2:
 # 6. 渲染
 if st.session_state.step >= 1 and st.session_state.data:
     data = st.session_state.data
+    st.markdown(f'<div class="result-container"><div class="word-font">{data["word"]}</div></div>', unsafe_allow_html=True)
     
-    # 核心展示
-    st.markdown(f'<div class="word-font">{data["word"]}</div>', unsafe_allow_html=True)
+    # 语音占位符
+    audio_placeholder = st.empty()
     
     if st.session_state.step == 1:
         if st.button("Check Meaning", key="nxt_2"):
             st.session_state.step = 2
             st.rerun()
+            
+        # 异步加载语音
+        try:
+            b64 = asyncio.run(get_voice_b64(data["word"], st.session_state.voice))
+            if b64:
+                audio_placeholder.markdown(f'<audio autoplay><source src="data:audio/mp3;base64,{b64}"></audio>', unsafe_allow_html=True)
+        except:
+            pass
 
     if st.session_state.step >= 2:
-        st.markdown(f'<div class="mean-font">{data["mean"]}</div>', unsafe_allow_html=True)
+        st.markdown(f'<div class="result-container"><div class="mean-font">{data["mean"]}</div></div>', unsafe_allow_html=True)
         if st.session_state.step == 2:
             if st.button("Show Example", key="nxt_3"):
                 st.session_state.step = 3
@@ -98,6 +133,6 @@ if st.session_state.step >= 1 and st.session_state.data:
 
     if st.session_state.step == 3:
         st.markdown(f'''<div class="example-container">
-            <div style="font-size:20px; color:#1e293b; font-style:italic;">{data["sent_en"]}</div>
-            <div style="font-size:16px; color:#64748B; margin-top:10px;">{data["sent_cn"]}</div>
+            <div class="example-en">{data["sent_en"]}</div>
+            <div class="example-cn">{data["sent_cn"]}</div>
         </div>''', unsafe_allow_html=True)
