@@ -7,7 +7,7 @@ import time
 import secrets
 from openai import OpenAI
 
-# 1. 核心配置
+# 1. 配置
 client = OpenAI(
     api_key=st.secrets["api_key"], 
     base_url="https://api.deepseek.com"
@@ -24,18 +24,18 @@ async def get_voice_b64(text, voice):
     except:
         return None
 
-# 2. 界面样式 (包含永远不会卡死的加载动画)
+# 2. 界面样式
 st.set_page_config(page_title="Flash Cards Pro", page_icon="💡", layout="centered")
 st.markdown("""
     <style>
     #MainMenu, footer, header, .stDeployButton {visibility: hidden;}
     [data-testid="stSidebar"] {display: none;}
     
-    /* 顶部导航 */
+    /* 模式切换按钮 */
     div.stButton > button { border-radius: 8px; font-weight: bold; width: 100%; }
     div.stButton > button:first-child[kind="primary"] { background-color: #1E3A8A !important; color: white !important; }
 
-    /* 💡 灯泡按钮居中 */
+    /* 灯泡按钮居中 */
     .bulb-container { display: flex; justify-content: center; margin: 20px 0; }
     .bulb-btn button {
         width: 110px !important; height: 110px !important; 
@@ -44,24 +44,11 @@ st.markdown("""
         box-shadow: 0 4px 15px rgba(30, 58, 138, 0.2) !important;
     }
 
-    /* 原生加载动画：蓝色进度条 */
-    .loading-bar {
-        width: 100%; height: 4px; background-color: #f3f3f3;
-        position: relative; overflow: hidden; margin-top: 10px; border-radius: 2px;
-    }
-    .loading-bar::after {
-        content: ""; position: absolute; left: -50%; width: 50%; height: 100%;
-        background-color: #1E3A8A; animation: loading 1.5s infinite linear;
-    }
-    @keyframes loading {
-        0% { left: -50%; }
-        100% { left: 100%; }
-    }
-
-    /* 内容字体 */
-    .word-font { font-size: 60px; font-weight: 900; color: #1E3A8A; text-align: center; margin-top: 10px; }
+    /* 字体样式 */
+    .word-font { font-size: 65px; font-weight: 900; color: #1E3A8A; text-align: center; margin-bottom: 0px; }
+    .phonetic-font { font-size: 22px; color: #64748B; text-align: center; font-family: 'Arial'; margin-bottom: 15px; }
     .def-font { font-size: 26px; color: #1E40AF; font-weight: 600; text-align: center; margin: 15px 0; }
-    .example-box { background: #F8FAFC; border-left: 6px solid #1E3A8A; padding: 20px; border-radius: 0 10px 10px 0; }
+    .example-box { background: #F8FAFC; border-left: 6px solid #1E3A8A; padding: 20px; border-radius: 0 12px 12px 0; margin-top: 20px; }
     </style>
     """, unsafe_allow_html=True)
 
@@ -81,48 +68,47 @@ for i, m in enumerate(modes):
             st.session_state.data = None
             st.rerun()
 
-# 5. 灯泡按钮与加载反馈
+# 5. 灯泡抽词逻辑
 st.markdown('<div class="bulb-container bulb-btn">', unsafe_allow_html=True)
-# 这里不再用动态 Key，直接用固定 Key 减少前端重绘
-if st.button("💡", key="fixed_bulb"):
-    # 强制标记正在加载
-    st.session_state.step = 0.5 
-    st.rerun()
-st.markdown('</div>', unsafe_allow_html=True)
-
-# 6. 处理加载中的逻辑
-if st.session_state.step == 0.5:
-    # 显示永远不会卡死的 CSS 进度条
-    st.markdown('<div class="loading-bar"></div><p style="text-align:center;color:#64748B;font-size:12px;">Picking a word...</p>', unsafe_allow_html=True)
+if st.button("💡", key=f"bulb_{time.time()}"):
+    st.session_state.step = 1
+    st.session_state.data = None
     
-    fingerprint = secrets.token_hex(4)
     try:
+        uid = secrets.token_hex(3)
+        # 强制 AI 输出音标
+        prompt = f"Random {st.session_state.mode} word {uid}. Format: Word|Phonetic|EnglishDef|Sentence|Translation. No preamble."
         response = client.chat.completions.create(
             model="deepseek-chat",
-            messages=[{"role": "user", "content": f"Random {st.session_state.mode} word {fingerprint}. Format: Word|EnglishDef|Sentence|Translation."}],
-            timeout=8.0
+            messages=[{"role": "user", "content": prompt}],
+            timeout=6.0
         )
-        res = response.choices[0].message.content.strip().replace("*", "").split("|")
-        if len(res) >= 4:
+        raw = response.choices[0].message.content.strip().replace("*", "")
+        res = raw.split("|")
+        if len(res) >= 5:
             st.session_state.data = {
-                "word": res[0].strip(), "def_en": res[1].strip(),
-                "sent_en": res[2].strip(), "sent_cn": res[3].strip()
+                "word": res[0].strip(),
+                "phonetic": res[1].strip(),
+                "def_en": res[2].strip(),
+                "sent_en": res[3].strip(),
+                "sent_cn": res[4].strip()
             }
             v_map = {"考研": "en-GB-SoniaNeural", "IELTS": "en-GB-SoniaNeural", "TOEFL": "en-US-GuyNeural", "GRE": "en-US-GuyNeural"}
             st.session_state.voice = v_map.get(st.session_state.mode, "en-US-GuyNeural")
-            st.session_state.step = 1
-            st.rerun()
-    except Exception as e:
-        st.session_state.step = 0
-        st.error("Connection failed. Click Bulb again.")
+        else:
+            st.warning("解析错误，请再点一次灯泡 💡")
+    except:
+        st.error("DeepSeek 响应超时，请重试 💡")
+st.markdown('</div>', unsafe_allow_html=True)
 
-# 7. 渲染内容
+# 6. 渲染
 if st.session_state.step >= 1 and st.session_state.data:
     data = st.session_state.data
     st.markdown(f'<div class="word-font">{data["word"]}</div>', unsafe_allow_html=True)
+    st.markdown(f'<div class="phonetic-font">{data["phonetic"]}</div>', unsafe_allow_html=True)
     
     if st.session_state.step == 1:
-        # 发音处理
+        # 音频自动播放
         audio_placeholder = st.empty()
         try:
             b64 = asyncio.run(get_voice_b64(data["word"], st.session_state.voice))
@@ -130,7 +116,7 @@ if st.session_state.step >= 1 and st.session_state.data:
                 audio_placeholder.markdown(f'<audio autoplay playsinline><source src="data:audio/mp3;base64,{b64}"></audio>', unsafe_allow_html=True)
         except: pass
             
-        if st.button("Check Definition", use_container_width=True):
+        if st.button("Check English Definition", use_container_width=True):
             st.session_state.step = 2
             st.rerun()
 
@@ -143,6 +129,6 @@ if st.session_state.step >= 1 and st.session_state.data:
 
     if st.session_state.step == 3:
         st.markdown(f'''<div class="example-box">
-            <div style="font-size:19px; font-style:italic;">{data["sent_en"]}</div>
-            <div style="font-size:16px; color:#64748B; margin-top:10px;">{data["sent_cn"]}</div>
+            <div style="font-size:20px; font-style:italic; line-height:1.5;">{data["sent_en"]}</div>
+            <div style="font-size:17px; color:#64748B; margin-top:10px;">{data["sent_cn"]}</div>
         </div>''', unsafe_allow_html=True)
